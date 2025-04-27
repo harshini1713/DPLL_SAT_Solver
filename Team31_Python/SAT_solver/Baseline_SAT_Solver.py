@@ -8,13 +8,13 @@ import numpy as np
 
 class Clause:
     
-    def __init__(self, literals, watched_one=None, watched_two=None, learned=False, lbd=0):
+    def __init__(self, literals, watched_one=None, watched_two=None, learned=False, literal_block_distance=0):
         self.literals = literals  
         self.size = len(self.literals)
         self.watched_one = watched_one
         self.watched_two = watched_two
         self.learned = learned
-        self.lbd = lbd
+        self.literal_block_distance = literal_block_distance
 
         if (not watched_one) and (not watched_two):
             if len(self.literals) > 1:
@@ -84,7 +84,8 @@ class Clause:
                 self.literals[self.watched_two] == assignment[abs(self.literals[self.watched_two])])
 
 
-class CNFFormula:
+
+class CNF_Formula:
     
     def __init__(self, formula):
         self.formula = formula  # list of lists of literals
@@ -230,7 +231,7 @@ class CNFFormula:
                 self.negative_literal_counter[(abs(literal))] += 1
 
         # Find out LBD of the assertive clause
-        lbd = sum(decision_level_present)
+        literal_block_distance = sum(decision_level_present)
 
         # Find the `watched_one` index for the assertive clause which is the index of the last assigned literal
         # in the assertive clause with decision level equal to the assertion level
@@ -254,7 +255,7 @@ class CNFFormula:
             watched_one = watched_two
 
         # Create the assertive clause and update the watched lists of the watched literals
-        assertive_clause = Clause(assertive_clause_literals, watched_one=watched_one, watched_two=watched_two, learned=True, lbd=lbd)
+        assertive_clause = Clause(assertive_clause_literals, watched_one=watched_one, watched_two=watched_two, learned=True, literal_block_distance=literal_block_distance)
         self.watched_lists[abs(assertive_clause.literals[assertive_clause.watched_one])].append(assertive_clause)
         if assertive_clause.watched_one != assertive_clause.watched_two:
             self.watched_lists[abs(assertive_clause.literals[assertive_clause.watched_two])].append(assertive_clause)
@@ -324,40 +325,39 @@ class CNFFormula:
                     best_counter = self.negative_literal_counter[variable]
 
         return decision_literal
-
+        
     def random_heuristic(self) -> int:
         
-        unassigned = []
-        for variable in self.variables:
-            if self.assignment[variable] == 0:
-                unassigned.append(variable)
+        if not hasattr(self, '_unassigned') or not self._unassigned:
+          self._unassigned = [var for var in self.variables if self.assignment[var] == 0]
 
-        decision_variable = random.choice(unassigned)
+        if not self._unassigned:
+           raise Exception("No unassigned variables left")
 
-        if random.random() <= 0.5:
-            return decision_variable
+    # Randomly select and remove a variable from the unassigned list
+        idx = random.randrange(len(self._unassigned))
+        decision_variable = self._unassigned.pop(idx)
 
-        else:
-            return -decision_variable
+    # Randomly decide whether to assign positive or negative
+        return decision_variable if random.random() <= 0.5 else -decision_variable
 
     def select_decision_literal(self, heuristic: int) -> int:
-        # May be we can cahnge to switch case statements here and add two more heuristics  and also change the ordering of heuristics
-        
-        if heuristic == 0:
+     match heuristic:
+        case 0:
             return self.most_recurring_heuristic()
-
-        if heuristic == 1:
+        case 1:
             return self.vsids_heuristic()
-
-        if heuristic == 2:
+        case 2:
             return self.random_heuristic()
+        case _:
+            raise ValueError(f"Unknown heuristic value: {heuristic}")
 
-    def delete_learned_clauses_by_lbd(self, lbd_limit: float) -> None:
+    def delete_learned_clauses_by_lbd(self, literal_block_dist_limit: float) -> None:
         
-        lbd_limit = int(lbd_limit)
+        literal_block_dist_limit = int(literal_block_dist_limit)
         new_learned_clauses = []
         for clause in self.learned_clauses:
-            if clause.lbd > lbd_limit:
+            if clause.literal_block_distance > literal_block_dist_limit:
                 self.watched_lists[abs(clause.literals[clause.watched_one])].remove(clause)
                 if clause.watched_one != clause.watched_two:
                     self.watched_lists[abs(clause.literals[clause.watched_two])].remove(clause)
@@ -367,20 +367,20 @@ class CNFFormula:
 
         self.learned_clauses = new_learned_clauses
 
-    def restart(self) -> None:
+    def reinstate(self) -> None:
         
         self.unit_clauses_queue.clear()
         self.backtrack(decision_level=0)
 
  
-def cdcl(cnf_formula: CNFFormula, heuristic: int = 1, conflicts_limit: int = 100,
-         lbd_limit: int = 3) -> Tuple[bool, int, int, int]:
+def cdcl(cnf_formula: CNF_Formula, heuristic: int = 1, conflicts_limit: int = 100,
+         literal_block_dist_limit: int = 3) -> Tuple[bool, int, int, int]:
    
     # Counters for number of decisions, unit propagations
     decision_level = 0
     decisions = 0
     unit_propagations = 0
-    restarts = 0
+    reinstates = 0
     conflicts = 0
 
     # Unit propagation
@@ -388,7 +388,7 @@ def cdcl(cnf_formula: CNFFormula, heuristic: int = 1, conflicts_limit: int = 100
     unit_propagations += len(propagated_literals)
 
     if previous_of_conflict:
-        return False, [], decisions, unit_propagations, restarts
+        return False, [], decisions, unit_propagations, reinstates
 
     
     while not cnf_formula.all_assigned():
@@ -409,21 +409,21 @@ def cdcl(cnf_formula: CNFFormula, heuristic: int = 1, conflicts_limit: int = 100
         while previous_of_conflict:
             conflicts += 1
 
-            # If the amount of conflicts reached the limit, perform restart and delete learned clauses with big LBD
+            # If the amount of conflicts reached the limit, perform reinstate and delete learned clauses with big LBD
             if conflicts == conflicts_limit:
                 conflicts = 0
                 conflicts_limit = int(conflicts_limit * 1.1)
-                lbd_limit = lbd_limit * 1.1
-                restarts += 1
+                literal_block_dist_limit = literal_block_dist_limit * 1.1
+                reinstates += 1
                 decision_level = 0
-                cnf_formula.restart()
-                cnf_formula.delete_learned_clauses_by_lbd(lbd_limit)
+                cnf_formula.reinstate()
+                cnf_formula.delete_learned_clauses_by_lbd(literal_block_dist_limit)
                 break
 
             # Analyse conflict: learn new clause from the conflict and find out backtrack decision level
             backtrack_level = cnf_formula.conflict_inspection(previous_of_conflict, decision_level)
             if backtrack_level < 0:
-                return False, [], decisions, unit_propagations, restarts
+                return False, [], decisions, unit_propagations, reinstates
 
             # Backtrack
             cnf_formula.backtrack(backtrack_level)
@@ -433,11 +433,11 @@ def cdcl(cnf_formula: CNFFormula, heuristic: int = 1, conflicts_limit: int = 100
             propagated_literals, previous_of_conflict = cnf_formula.unit_propagation(decision_level)
             unit_propagations += len(propagated_literals)
 
-    return True, list(cnf_formula.assignment_stack), decisions, unit_propagations, restarts
+    return True, list(cnf_formula.assignment_stack), decisions, unit_propagations, reinstates
 
 
 def find_model(input_file: str,  heuristic: int = 1, conflicts_limit: int = 100,
-               lbd_limit: int = 3) -> Optional[Tuple[bool, float, int, int, int]]:
+               literal_block_dist_limit: int = 3) -> Optional[Tuple[bool, float, int, int, int]]:
    
     
     if input_file[-3:] == "cnf":
@@ -454,10 +454,10 @@ def find_model(input_file: str,  heuristic: int = 1, conflicts_limit: int = 100,
     formula = [list(map(int, clause[:-2].strip().split())) for clause in dimacs_formula if clause != "" and
                clause[0] not in ["c", "p", "%", "0"]]
 
-    cnf_formula = CNFFormula(formula)
+    cnf_formula = CNF_Formula(formula)
     start_time = time.time()
-    sat, model, decisions, unit_propagations, restarts = cdcl(cnf_formula, heuristic, conflicts_limit,
-                                                              lbd_limit)
+    sat, model, decisions, unit_propagations, reinstates = cdcl(cnf_formula, heuristic, conflicts_limit,
+                                                              literal_block_dist_limit)
     cpu_time = time.time() - start_time
     if sat:
         model.sort(key=abs)
@@ -473,9 +473,9 @@ def find_model(input_file: str,  heuristic: int = 1, conflicts_limit: int = 100,
     #print("Total execution time =", cpu_time*1000, "seconds")
     #print("Number of decisions =", decisions)
     #print("Number of steps of unit propagation =", unit_propagations)
-    #print("Number of restarts =", restarts)
+    #print("Number of reinstates =", reinstates)
 
-    return sat, model, cpu_time, decisions, unit_propagations, restarts
+    return sat, model, cpu_time, decisions, unit_propagations, reinstates
 
 
 if __name__ == "__main__":
@@ -487,10 +487,10 @@ if __name__ == "__main__":
                                                                  "unassigned literal based on VSIDS heuristic, "
                                                                  "`2` - pick the random unassigned literal")
     parser.add_argument("--conflicts_limit", default=100, help="The initial limit on the number of conflicts before "
-                                                               "the CDCL solver restarts")
-    parser.add_argument("--lbd_limit", default=3, help="The initial limit on the number of different decision levels "
+                                                               "the CDCL solver reinstates")
+    parser.add_argument("--literal_block_dist_limit", default=3, help="The initial limit on the number of different decision levels "
                                                        "in the learned clause for clause deletion")
     args = parser.parse_args()
 
-    find_model(args.input, args.heuristic, args.conflicts_limit, args.lbd_limit)
+    find_model(args.input, args.heuristic, args.conflicts_limit, args.literal_block_dist_limit)
 
