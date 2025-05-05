@@ -22,6 +22,15 @@ class Clause_CNF:
 
             elif len(self.literals) > 0:
                 self.watched_one = self.watched_two = 0
+    @property
+    def literal_block_distance(self):
+        return self._literal_block_distance
+
+    @literal_block_distance.setter
+    def literal_block_distance(self, value):
+        if not isinstance(value, int) or value < 0:
+            raise ValueError("LBD must be non-negative")
+        self._literal_block_distance = value
 
     def partial_assignment_literals(self, assignment: list) -> list:
         
@@ -37,7 +46,7 @@ class Clause_CNF:
 
     def watched_literal_update_pass(self, assignment: list, new_variable: int) -> Tuple[bool, int, Optional[int]]:
        
-        #  the old watched literal index is `self.watched_one`
+        #  prev watched literal index: `self.watched_one`
         if new_variable == abs(self.literals[self.watched_two]):
             temp = self.watched_one
             self.watched_one = self.watched_two
@@ -69,7 +78,7 @@ class Clause_CNF:
                 self.watched_one = w
                 break
 
-            # If the new watched literal index `self.watched_one` has not been found then the Clause is unit with
+            # If the new watched literal index `self.watched_one` not found ---> Clause is unit with
             # Clause[self.watched_two] being the only unassigned literal.
             if self.watched_one == old_watched_one:
                 return True, self.literals[self.watched_one], True
@@ -81,7 +90,6 @@ class Clause_CNF:
         
         return (self.literals[self.watched_one] == assignment[abs(self.literals[self.watched_one])] or
                 self.literals[self.watched_two] == assignment[abs(self.literals[self.watched_two])])
-
 
 
 class CNF_Formula:
@@ -171,8 +179,8 @@ class CNF_Formula:
        
         return len(self.variables) == len(self.assignment_stack)
 
-
     def backtrack(self, decision_level: int) -> None:
+     
      while self.assignment_stack:
         literal = self.assignment_stack[-1]
         var = abs(literal)
@@ -182,7 +190,6 @@ class CNF_Formula:
         self.assignment[var] = 0
         self.previous[var] = None
         self.decision_level[var] = -1
-
 
     @staticmethod
     def resolve(clause_one: list, clause_two: list, literal: int) -> list: 
@@ -194,7 +201,7 @@ class CNF_Formula:
 
     def conflict_inspection(self, previous_of_conflict: Clause_CNF, decision_level: int) -> int:
        
-        # If the conflict was detected at decision level 0, return -1
+        # Conflict at decision level 0 ---> return -1
         if decision_level == 0:
             return -1
 
@@ -208,8 +215,7 @@ class CNF_Formula:
                     assertive_clause_literals = self.resolve(assertive_clause_literals,
                                                              self.previous[abs(literal)].literals, literal)
                     break
-
-     
+ 
         assertion_level = 0
         unit_literal = None
         watched_two = None
@@ -233,7 +239,7 @@ class CNF_Formula:
             else:
                 self.negative_literal_counter[(abs(literal))] += 1
 
-        # Find out LBD of the assertive clause
+        # LBD of assertive clause
         literal_block_distance = sum(decision_level_present)
 
         # Find the `watched_one` index for the assertive clause which is the index of the last assigned literal
@@ -287,6 +293,24 @@ class CNF_Formula:
 
         return propagated_literals, None
 
+    def vsids_heuristic(self) -> int:
+      decision_literal = None
+      best_counter = -1  # use -1 to ensure 0 counts are considered
+
+      for variable in self.variables:
+        if self.assignment[variable] == 0:
+            pos_score = self.positive_literal_counter[variable]
+            neg_score = self.negative_literal_counter[variable]
+
+            if pos_score >= neg_score and pos_score > best_counter:
+                decision_literal = variable
+                best_counter = pos_score
+            elif neg_score > pos_score and neg_score > best_counter:
+                decision_literal = -variable
+                best_counter = neg_score
+
+      return decision_literal
+
     def most_recurring_heuristic(self) -> int:
         
         number_of_clauses = -1
@@ -312,24 +336,6 @@ class CNF_Formula:
                     decision_literal = -variable
 
         return decision_literal
-
-    def vsids_heuristic(self) -> int:
-      decision_literal = None
-      best_counter = -1  # use -1 to ensure 0 counts are considered
-
-      for variable in self.variables:
-        if self.assignment[variable] == 0:
-            pos_score = self.positive_literal_counter[variable]
-            neg_score = self.negative_literal_counter[variable]
-
-            if pos_score >= neg_score and pos_score > best_counter:
-                decision_literal = variable
-                best_counter = pos_score
-            elif neg_score > pos_score and neg_score > best_counter:
-                decision_literal = -variable
-                best_counter = neg_score
-
-      return decision_literal
         
     def random_heuristic(self) -> int:
         
@@ -339,20 +345,20 @@ class CNF_Formula:
         if not self._unassigned:
            raise Exception("No unassigned variables left")
 
-    # Randomly select and remove a variable from the unassigned list
+    # Random selection & removal of variable from unassigned list
         idx = random.randrange(len(self._unassigned))
         decision_variable = self._unassigned.pop(idx)
 
-    # Randomly decide whether to assign positive or negative
+    # Random decision for variable assignement: positive/negative
         return decision_variable if random.random() <= 0.5 else -decision_variable
 
     def select_decision_literal(self, heuristic: int) -> int:
      match heuristic:
-        case 0:
-            return self.most_recurring_heuristic()
         case 1:
             return self.vsids_heuristic()
         case 2:
+            return self.most_recurring_heuristic()
+        case 3:
             return self.random_heuristic()
         case _:
             raise ValueError(f"Unknown heuristic value: {heuristic}")
@@ -380,14 +386,13 @@ class CNF_Formula:
 def cdcl(cnf_formula: CNF_Formula, heuristic: int = 1, conflicts_limit: int = 100,
          literal_block_dist_limit: float = 3.0) -> Tuple[bool, List[int], int, int, int]:
 
-    # Counters for number of decisions, unit propagations
     decision_level = 0
     decisions = 0
     unit_propagations = 0
     reinstates = 0
     conflicts = 0
 
-    # Initial unit propagation
+    # unit propagation: initial 
     propagated_literals, previous_of_conflict = cnf_formula.unit_propagation(decision_level)
     unit_propagations += len(propagated_literals)
 
@@ -395,25 +400,25 @@ def cdcl(cnf_formula: CNF_Formula, heuristic: int = 1, conflicts_limit: int = 10
         return False, [], decisions, unit_propagations, reinstates
 
     while not cnf_formula.all_assigned():
-        # Find the literal for decision by finding one using decision heuristic
+        # decision heuristic
         decision_literal = cnf_formula.select_decision_literal(heuristic)
         if decision_literal is None:
             break  # No unassigned literal found
 
         decision_level += 1
 
-        # Perform the partial assignment of the formula with the decision literal
+        # Partial assignment of formula with decision literal
         cnf_formula.literal_assignment(decision_literal, decision_level)
         decisions += 1
 
-        # Unit propagation
+        # unit propagation: actual
         propagated_literals, previous_of_conflict = cnf_formula.unit_propagation(decision_level)
         unit_propagations += len(propagated_literals)
 
         while previous_of_conflict:
             conflicts += 1
 
-            # If the amount of conflicts reached the limit, perform reinstate and delete learned clauses with big LBD
+            # perform reinstate and delete learned clauses with big LBD after checking the Conflict limit
             if conflicts >= conflicts_limit:
                 conflicts = 0
                 conflicts_limit = int(conflicts_limit * 1.1)
@@ -446,7 +451,7 @@ def find_model(input_file: str, heuristic: int = 1, conflicts_limit: int = 100,
     if not input_file.endswith(".cnf"):
         print("Unsupported file extension. File extension must be `.cnf` for DIMACS.")
         return
-
+# Exception handling for the input file
     try:
         with open(input_file, "r") as input:
             dimacs_formula = input.read().splitlines()
@@ -463,9 +468,7 @@ def find_model(input_file: str, heuristic: int = 1, conflicts_limit: int = 100,
     cnf_formula = CNF_Formula(formula)
 
     start_time = time.time()
-    sat, model, decisions, unit_propagations, reinstates = cdcl(
-        cnf_formula, heuristic, conflicts_limit, literal_block_dist_limit
-    )
+    sat, model, decisions, unit_propagations, reinstates = cdcl(cnf_formula, heuristic, conflicts_limit, literal_block_dist_limit)
     cpu_time = time.time() - start_time
 
     if sat:
@@ -483,9 +486,9 @@ if __name__ == "__main__":
     parser.add_argument("input", type=str, help="Input `.cnf` file containing the formula.")
     parser.add_argument("--heuristic", type=int, default=1, help=(
             "Decision heuristic to use:\n"
-            "  0 - Most occurrences in unsatisfied clauses\n"
-            "  1 - VSIDS heuristic (default)\n"
-            "  2 - Random unassigned literal"
+            "  1 - VSIDS heuristic :- default\n"
+            "  2 - Most occurrences in unsatisfied clauses\n"
+            "  3 - Random unassigned literal"
         ))
     parser.add_argument("--conflicts_limit", type=int, default=100, help="Initial conflict limit before reinstating (default: 100)")
     parser.add_argument("--literal_block_dist_limit", type=int, default=3,help="Initial LBD limit for learned clause deletion (default: 3)")
