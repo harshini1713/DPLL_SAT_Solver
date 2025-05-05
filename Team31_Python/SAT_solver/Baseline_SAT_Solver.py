@@ -32,17 +32,16 @@ class Clause_CNF:
             raise ValueError("LBD must be non-negative")
         self._literal_block_distance = value
 
+    
     def partial_assignment_literals(self, assignment: list) -> list:
-        
-        unassigned = []
-        for literal in self.literals:
-            if assignment[abs(literal)] == literal:
-                return []
+    # Return an empty list immediately if any literal is already assigned (i.e., satisfied).
+       if any(assignment[abs(literal)] == literal for literal in self.literals):
+        return []
 
-            if assignment[abs(literal)] == 0:
-                unassigned.append(literal)
+    # filter to find unassigned literals
+       unassigned = filter(lambda literal: assignment[abs(literal)] == 0, self.literals)
+       return list(unassigned)
 
-        return list(unassigned)
 
     def watched_literal_update_pass(self, assignment: list, new_variable: int) -> Tuple[bool, int, Optional[int]]:
        
@@ -200,84 +199,87 @@ class CNF_Formula:
         return list(input_clause1.union(input_clause2))
 
     def conflict_inspection(self, previous_of_conflict: Clause_CNF, decision_level: int) -> int:
-       
-        # Conflict at decision level 0 ---> return -1
-        if decision_level == 0:
-            return -1
 
-        # Find the literals of the assertive clause
-        assertive_clause_literals = previous_of_conflict.literals
-        current_assignment = deque(self.assignment_stack)
-        while len([l for l in assertive_clause_literals if self.decision_level[abs(l)] == decision_level]) > 1:
-            while True:
-                literal = current_assignment.pop()
-                if -literal in assertive_clause_literals:
-                    assertive_clause_literals = self.resolve(assertive_clause_literals,
-                                                             self.previous[abs(literal)].literals, literal)
-                    break
- 
-        assertion_level = 0
-        unit_literal = None
-        watched_two = None
-        decision_level_present = [False] * (decision_level + 1)
-        for index, literal in enumerate(assertive_clause_literals):
-            if assertion_level < self.decision_level[abs(literal)] < decision_level:
-                assertion_level = self.decision_level[abs(literal)]
+      # Conflict at decision level 0 ---> return -1
+      if decision_level == 0:
+        return -1
 
-            if self.decision_level[abs(literal)] == decision_level:
-                unit_literal = literal
-                watched_two = index
+      assertive_clause_literals = previous_of_conflict.literals
+      current_assignment = deque(self.assignment_stack)
 
-            if not decision_level_present[self.decision_level[abs(literal)]]:
-                decision_level_present[self.decision_level[abs(literal)]] = True
+      # Conflict resolution using clause learning
+      while len(list(filter(lambda l: self.decision_level[abs(l)] == decision_level, assertive_clause_literals))) > 1:
+        while True:
+            literal = current_assignment.pop()
+            if -literal in assertive_clause_literals:
+                assertive_clause_literals = self.resolve(
+                    assertive_clause_literals,
+                    self.previous[abs(literal)].literals,
+                    literal
+                )
+                break
 
-            self.positive_literal_counter = self.positive_literal_counter * 0.9
-            self.negative_literal_counter = self.negative_literal_counter * 0.9
-            if literal > 0:
-                self.positive_literal_counter[literal] += 1
+      # Initialize for LBD and watched literal determination
+      unit_literal = None
+      watched_two = None
+      decision_level_present = [False] * (decision_level + 1)
 
-            else:
-                self.negative_literal_counter[(abs(literal))] += 1
+      # Update activity counters and gather assertion level info
+      for index, literal in enumerate(assertive_clause_literals):
+        var = abs(literal)
+        level = self.decision_level[var]
 
-        # LBD of assertive clause
-        literal_block_distance = sum(decision_level_present)
+        if level == decision_level:
+            unit_literal = literal
+            watched_two = index
 
-        # Find the `watched_one` index for the assertive clause which is the index of the last assigned literal
-        # in the assertive clause with decision level equal to the assertion level
-        watched_one = None
-        if len(assertive_clause_literals) > 1:
-            current_assignment = deque(self.assignment_stack)
-            found = False
-            while current_assignment:
-                literal = current_assignment.pop()
-                if self.decision_level[abs(literal)] == assertion_level:
-                    for index, clause_literal in enumerate(assertive_clause_literals):
-                        if abs(literal) == abs(clause_literal):
-                            watched_one = index
-                            found = True
-                            break
+        if 0 < level < decision_level:
+            assertion_level = max(level, locals().get('assertion_level', 0))
 
-                if found:
-                    break
+        if not decision_level_present[level]:
+            decision_level_present[level] = True
 
+        # Apply exponential decay and bump literal scores
+        self.positive_literal_counter *= 0.9
+        self.negative_literal_counter *= 0.9
+        if literal > 0:
+            self.positive_literal_counter[literal] += 1
         else:
-            watched_one = watched_two
+            self.negative_literal_counter[var] += 1
 
-        # Create the assertive clause and update the watched lists of the watched literals
-        assertive_clause = Clause_CNF(assertive_clause_literals, watched_one=watched_one, watched_two=watched_two, learned=True, literal_block_distance=literal_block_distance)
-        self.watched_lists[abs(assertive_clause.literals[assertive_clause.watched_one])].append(assertive_clause)
-        if assertive_clause.watched_one != assertive_clause.watched_two:
-            self.watched_lists[abs(assertive_clause.literals[assertive_clause.watched_two])].append(assertive_clause)
+      # Compute LBD using set + map + lambda
+      literal_block_distance = len(set(map(lambda l: self.decision_level[abs(l)], assertive_clause_literals)))
 
-        # Add the assertive clause into the list of learned clauses
-        self.learned_clauses.append(assertive_clause)
+      # Find watched_one at assertion level
+      watched_one = None
+      if len(assertive_clause_literals) > 1:
+        current_assignment = deque(self.assignment_stack)
+        while current_assignment:
+            literal = current_assignment.pop()
+            if self.decision_level[abs(literal)] == assertion_level:
+                match = list(filter(
+                    lambda i: abs(assertive_clause_literals[i]) == abs(literal),
+                    range(len(assertive_clause_literals))
+                ))
+                if match:
+                    watched_one = match[0]
+                    break
+      else:
+        watched_one = watched_two
 
-        # Clear the unit clauses queue and add the assertive clause into the unit clauses queue
-        # together with its unit literal
-        self.unit_clauses_queue.clear()
-        self.unit_clauses_queue.append((assertive_clause, unit_literal))
+      # Create and register the assertive clause
+      assertive_clause = Clause_CNF(assertive_clause_literals,watched_one=watched_one,watched_two=watched_two,learned=True,literal_block_distance=literal_block_distance)
 
-        return assertion_level
+      self.watched_lists[abs(assertive_clause.literals[watched_one])].append(assertive_clause)
+      if watched_one != watched_two:
+        self.watched_lists[abs(assertive_clause.literals[watched_two])].append(assertive_clause)
+
+      self.learned_clauses.append(assertive_clause)
+
+      self.unit_clauses_queue.clear()
+      self.unit_clauses_queue.append((assertive_clause, unit_literal))
+
+      return assertion_level
 
     def unit_propagation(self, decision_level: int) -> Tuple[list, Optional[Clause_CNF]]:
         
@@ -338,19 +340,22 @@ class CNF_Formula:
         return decision_literal
         
     def random_heuristic(self) -> int:
-        
-        if not hasattr(self, '_unassigned') or not self._unassigned:
-          self._unassigned = [var for var in self.variables if self.assignment[var] == 0]
+       
+       # If _unassigned is not initialized or empty, populate it using filter
+       if not hasattr(self, '_unassigned') or not self._unassigned:
+        self._unassigned = list(filter(lambda var: self.assignment[var] == 0, self.variables))
 
-        if not self._unassigned:
-           raise Exception("No unassigned variables left")
+       # If no unassigned variables are found, raise an exception
+       if not self._unassigned:
+        raise Exception("No unassigned variables left")
 
-    # Random selection & removal of variable from unassigned list
-        idx = random.randrange(len(self._unassigned))
-        decision_variable = self._unassigned.pop(idx)
+       # Random selection & removal of variable from _unassigned list
+       idx = random.randrange(len(self._unassigned))
+       decision_variable = self._unassigned.pop(idx)
 
-    # Random decision for variable assignement: positive/negative
-        return decision_variable if random.random() <= 0.5 else -decision_variable
+       # Random decision for variable assignment: positive/negative
+       return decision_variable if random.random() <= 0.5 else -decision_variable
+
 
     def select_decision_literal(self, heuristic: int) -> int:
      match heuristic:
