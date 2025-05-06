@@ -89,90 +89,67 @@ class Clause_CNF:
         
         return (self.literals[self.watched_one] == assignment[abs(self.literals[self.watched_one])] or
                 self.literals[self.watched_two] == assignment[abs(self.literals[self.watched_two])])
-
-
+        
 class CNF_Formula:
-    
     def __init__(self, formula):
-        self.formula = formula  # list of lists of literals
-        self.clauses = [Clause_CNF(literals) for literals in self.formula]  # list of clauses
+        self.formula = formula
+        self.clauses = [Clause_CNF(literals) for literals in formula]
         self.learned_clauses = []
-        self.variables = set()  # unordered unique set of variables in the formula
-        self.watched_lists = {}  # dictionary: list of clauses with this `key` literal being watched
-        self.unit_clauses_queue = deque()  # queue for unit clauses
-        self.assignment_stack = deque()  # stack for representing the current assignment for backtracking
-        self.assignment = None  # the assignment list with `variable` as index and `+variable/-variable/0` as values
-        self.previous = None  # the previous list with `variable` as index and `Clause` as value
-        self.decision_level = None  # the decision level list with `variable` as index and `decision level` as value
-        self.positive_literal_counter = None
-        self.negative_literal_counter = None
+        self.unit_clauses_queue = deque()
+        self.assignment_stack = deque()
+        self.watched_lists = {}
+        self.variables = set()
 
         for clause in self.clauses:
-            # If the clause is unit right at the start, add it to the unit clauses queue
+            # Add unit clause to queue
             if clause.watched_one == clause.watched_two:
                 self.unit_clauses_queue.append((clause, clause.literals[clause.watched_two]))
 
-            # For every literal in clause:
-            for literal in clause.literals:
-                variable = abs(literal)
-                # - add variable to the set of all variables
-                self.variables.add(variable)
+            # Filter watched literals
+            watched_literals = filter(lambda lit: lit in (clause.literals[clause.watched_one], clause.literals[clause.watched_two]), clause.literals)
 
-                # - Create empty list of watched clauses for this variable, if it does not exist yet
-                if variable not in self.watched_lists:
-                    self.watched_lists[variable] = []
+            # Process filtered literals
+            for literal in watched_literals:
+                var = abs(literal)
+                self.variables.add(var)
+                self.watched_lists.setdefault(var, []).append(clause)
 
-                # - Update the list of watched clauses for this variable
-                if clause.literals[clause.watched_one] == literal or clause.literals[clause.watched_two] == literal:
-                    if clause not in self.watched_lists[variable]:
-                        self.watched_lists[variable].append(clause)
-
-        # Set the assignment/previous/decision_level list of the Formula with initial values for each variable
-        max_variable = max(self.variables)
-        self.assignment = [0] * (max_variable + 1)
-        self.previous = [None] * (max_variable + 1)
-        self.decision_level = [-1] * (max_variable + 1)
-        self.positive_literal_counter = np.zeros((max_variable + 1), dtype=np.float64)
-        self.negative_literal_counter = np.zeros((max_variable + 1), dtype=np.float64)
-        
+        max_var = max(self.variables)
+        self.assignment = [0] * (max_var + 1)
+        self.previous = [None] * (max_var + 1)
+        self.decision_level = [-1] * (max_var + 1)
+        self.positive_literal_counter = np.zeros(max_var + 1, dtype=np.float64)
+        self.negative_literal_counter = np.zeros(max_var + 1, dtype=np.float64)
 
     def literal_assignment(self, literal: int, decision_level: int) -> Tuple[bool, Optional[Clause_CNF]]:
-       
-        # Add literal to assignment stack and set the value of corresponding variable in the assignment list
-        self.assignment_stack.append(literal)
-        self.assignment[abs(literal)] = literal
-        self.decision_level[abs(literal)] = decision_level
+     var = abs(literal)
 
-        # Copy the watched list of this literal because we need to delete some of the clauses from it during
-        # iteration and that cannot be done while iterating through the same list
-        watched_list = self.watched_lists[abs(literal)][:]
+     self.assignment_stack.append(literal)
+     self.assignment[var] = literal
+     self.decision_level[var] = decision_level
 
-        # For every clause in the watched list of this variable perform the update of the watched literal and
-        # find out which clauses become unit and which become unsatisfied in the current assignment
-        for clause in watched_list:
-            success, watched_literal, unit = clause.watched_literal_update_pass(self.assignment, abs(literal))
+     watched_list = list(self.watched_lists[var])
+     existing_unit_literals = set(map(lambda x: x[1], self.unit_clauses_queue))
 
-            # If the clause is not unsatisfied:
-            if success:
-                # If the watched literal was changed:
-                if abs(watched_literal) != abs(literal):
-                    # Add this clause to the watched list of the new watched literal
-                    if clause not in self.watched_lists[abs(watched_literal)]:
-                        self.watched_lists[abs(watched_literal)].append(clause)
+     for clause in watched_list:
+        success, new_watched_literal, is_unit = clause.watched_literal_update_pass(self.assignment, var)
 
-                    # Remove this clause from the watched list of the old watched literal
-                    self.watched_lists[abs(literal)].remove(clause)
+        if not success:
+            return False, clause
 
-                # If the clause is unit then add the clause to the unit clauses queue
-                if unit:
-                    if clause.literals[clause.watched_two] not in [x[1] for x in self.unit_clauses_queue]:
-                        self.unit_clauses_queue.append((clause, clause.literals[clause.watched_two]))
+        new_var = abs(new_watched_literal)
+        if new_var != var:
+            # Move clause to new watched list
+            self.watched_lists[new_var].append(clause)
+            self.watched_lists[var] = list(filter(lambda c: c != clause, self.watched_lists[var]))
 
-            # If the clause is unsatisfied return False
-            if not success:
-                return False, clause
+        if is_unit:
+            new_unit_lit = clause.literals[clause.watched_two]
+            if new_unit_lit not in existing_unit_literals:
+                self.unit_clauses_queue.append((clause, new_unit_lit))
+                existing_unit_literals.add(new_unit_lit)
 
-        return True, None
+     return True, None
 
     def all_assigned(self) -> bool:
        
