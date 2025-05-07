@@ -140,6 +140,8 @@ class CNF_Formula:
         new_var = abs(new_watched_literal)
         if new_var != var:
             # Move clause to new watched list
+            if new_var not in self.watched_lists:
+              self.watched_lists[new_var] = []
             self.watched_lists[new_var].append(clause)
             self.watched_lists[var] = list(filter(lambda c: c != clause, self.watched_lists[var]))
 
@@ -200,7 +202,7 @@ class CNF_Formula:
       unit_literal = None
       watched_two = None
       decision_level_present = [False] * (decision_level + 1)
-
+      assertion_level = 0
       # Update activity counters and gather assertion level info
       for index, literal in enumerate(assertive_clause_literals):
         var = abs(literal)
