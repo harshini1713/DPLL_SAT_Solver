@@ -276,23 +276,6 @@ class CNF_Formula:
 
         return propagated_literals, None
 
-    # def vsids_heuristic(self) -> int:
-    #   decision_literal = None
-    #   best_counter = -1  # use -1 to ensure 0 counts are considered
-
-    #   for variable in self.variables:
-    #     if self.assignment[variable] == 0:
-    #         pos_score = self.positive_literal_counter[variable]
-    #         neg_score = self.negative_literal_counter[variable]
-
-    #         if pos_score >= neg_score and pos_score > best_counter:
-    #             decision_literal = variable
-    #             best_counter = pos_score
-    #         elif neg_score > pos_score and neg_score > best_counter:
-    #             decision_literal = -variable
-    #             best_counter = neg_score
-
-    #   return decision_literal
     def vsids_heuristic(self) -> int:
         
          decision_literal = None
