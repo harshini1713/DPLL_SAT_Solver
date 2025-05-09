@@ -173,8 +173,10 @@ class CNF_Formula:
     def resolve(clause_one: list, clause_two: list, literal: int) -> list: 
         input_clause1 = set(clause_one)
         input_clause2 = set(clause_two)
-        input_clause1.remove(-literal)
-        input_clause2.remove(literal)
+        if -literal in input_clause1:
+           input_clause1.remove(-literal)
+        if literal in input_clause2:
+           input_clause2.remove(literal)
         return list(input_clause1.union(input_clause2))
 
     def conflict_inspection(self, previous_of_conflict: Clause_CNF, decision_level: int) -> int:
@@ -341,7 +343,8 @@ class CNF_Formula:
 
        # If no unassigned variables are found, raise an exception
        if not self._unassigned:
-        raise Exception("No unassigned variables left")
+        return None
+        #raise Exception("No unassigned variables left")
 
        # Random selection & removal of variable from _unassigned list
        idx = random.randrange(len(self._unassigned))
@@ -477,7 +480,10 @@ def find_model(input_file: str, heuristic: int = 1, conflicts_limit: int = 100,
         print("ASSIGNMENT:", " ".join(f"{var}={int(val)}" for var, val in assignment.items()))
     else:
         print("RESULT: UNSAT")
-
+    # print("Total CPU time =", cpu_time, "seconds")
+    # print("Number of decisions =", decisions)
+    # print("Number of steps of unit propagation =", unit_propagations)
+    # print("Number of reinstates =", reinstates)
     return sat, model, cpu_time, decisions, unit_propagations, reinstates
 
 if __name__ == "__main__":
