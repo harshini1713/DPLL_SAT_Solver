@@ -71,8 +71,17 @@ class Clause_CNF:
             for w in [(self.watched_one + i) % self.size for i in range(self.size)]:
                 # new index `w` must not be equal to `self.watched_two` and
                 # Clause[w] cannot be False in the current assignment
-                if w == self.watched_two or -self.literals[w] == assignment[abs(self.literals[w])]:
-                    continue
+                # if w == self.watched_two or -self.literals[w] == assignment[abs(self.literals[w])]:
+                #     continue
+                if w == self.watched_two:
+                      continue
+
+                index = abs(self.literals[w])
+                if index >= len(assignment):
+                      #print("DEBUG: assignment too short for literal:", self.literals[w])
+                      continue
+                if -self.literals[w] == assignment[index]:
+                      continue
 
                 self.watched_one = w
                 break
@@ -91,7 +100,7 @@ class Clause_CNF:
                 self.literals[self.watched_two] == assignment[abs(self.literals[self.watched_two])])
         
 class CNF_Formula:
-    def __init__(self, formula):
+    def __init__(self, formula, num_vars):
         self.formula = formula
         self.clauses = [Clause_CNF(literals) for literals in formula]
         self.learned_clauses = []
@@ -114,12 +123,11 @@ class CNF_Formula:
                 self.variables.add(var)
                 self.watched_lists.setdefault(var, []).append(clause)
 
-        max_var = max(self.variables)
-        self.assignment = [0] * (max_var + 1)
-        self.previous = [None] * (max_var + 1)
-        self.decision_level = [-1] * (max_var + 1)
-        self.positive_literal_counter = np.zeros(max_var + 1, dtype=np.float64)
-        self.negative_literal_counter = np.zeros(max_var + 1, dtype=np.float64)
+        self.assignment = [0] * (num_vars + 1)
+        self.previous = [None] * (num_vars + 1)
+        self.decision_level = [-1] * (num_vars + 1)
+        self.positive_literal_counter = np.zeros(num_vars + 1, dtype=np.float64)
+        self.negative_literal_counter = np.zeros(num_vars + 1, dtype=np.float64)
 
     def literal_assignment(self, literal: int, decision_level: int) -> Tuple[bool, Optional[Clause_CNF]]:
      var = abs(literal)
@@ -152,6 +160,7 @@ class CNF_Formula:
                 existing_unit_literals.add(new_unit_lit)
 
      return True, None
+    
 
     def all_assigned(self) -> bool:
        
@@ -190,15 +199,21 @@ class CNF_Formula:
 
       # Conflict resolution using clause learning
       while len(list(filter(lambda l: self.decision_level[abs(l)] == decision_level, assertive_clause_literals))) > 1:
-        while True:
+        while current_assignment:
             literal = current_assignment.pop()
             if -literal in assertive_clause_literals:
+                prev_clause = self.previous[abs(literal)]
+                if prev_clause is None:
+                    # Skip if no clause led to this assignment (i.e., decision literal)
+                    continue
                 assertive_clause_literals = self.resolve(
                     assertive_clause_literals,
                     self.previous[abs(literal)].literals,
                     literal
                 )
                 break
+        else:
+            break          
 
       # Initialize for LBD and watched literal determination
       unit_literal = None
@@ -232,7 +247,7 @@ class CNF_Formula:
       literal_block_distance = len(set(map(lambda l: self.decision_level[abs(l)], assertive_clause_literals)))
 
       # Find watched_one at assertion level
-      watched_one = None
+      watched_one = watched_two
       if len(assertive_clause_literals) > 1:
         current_assignment = deque(self.assignment_stack)
         while current_assignment:
@@ -245,8 +260,8 @@ class CNF_Formula:
                 if match:
                     watched_one = match[0]
                     break
-      else:
-        watched_one = watched_two
+      #else:
+      #  watched_one = watched_two
 
       # Create and register the assertive clause
       assertive_clause = Clause_CNF(assertive_clause_literals,watched_one=watched_one,watched_two=watched_two,learned=True,literal_block_distance=literal_block_distance)
@@ -444,13 +459,30 @@ def find_model(input_file: str, heuristic: int = 1, conflicts_limit: int = 100,
         print(f"File not found: {input_file}")
         return
 
-    formula = [
-        list(map(int, clause[:-2].strip().split()))
-        for clause in dimacs_formula
-        if clause and clause[0] not in {"c", "p", "%", "0"}
-    ]
+    #formula = [
+    #    list(map(int, clause[:-2].strip().split()))
+    #    for clause in dimacs_formula
+    #    if clause and clause[0] not in {"c", "p", "%", "0"}
+    #]
+    num_vars = 0
+    clauses = []
 
-    cnf_formula = CNF_Formula(formula)
+    for line in dimacs_formula:
+       line = line.strip()
+       if not line or line.startswith('c') or line == '0':
+          continue
+       if line.startswith('p'):
+        # This line looks like: p cnf 250 1065
+          tokens = line.split()
+          num_vars = int(tokens[2])
+       else:
+          clause = list(map(int, line.split()))
+          if clause[-1] == 0:
+             clause = clause[:-1]  # Remove trailing 0
+          clauses.append(clause)
+
+
+    cnf_formula = CNF_Formula(clauses, num_vars)
 
     start_time = time.time()
     sat, model, decisions, unit_propagations, reinstates = cdcl(cnf_formula, heuristic, conflicts_limit, literal_block_dist_limit)
@@ -472,7 +504,7 @@ def find_model(input_file: str, heuristic: int = 1, conflicts_limit: int = 100,
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="CDCL SAT Solver", formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument("input", type=str, help="Input `.cnf` file containing the formula.")
-    parser.add_argument("--heuristic", type=int, default=1, help=(
+    parser.add_argument("--heuristic", type=int, default=2, help=(
             "Decision heuristic to use:\n"
             "  1 - VSIDS heuristic :- default\n"
             "  2 - Most occurrences in unsatisfied clauses\n"
